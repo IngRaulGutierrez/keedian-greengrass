@@ -1,0 +1,27 @@
+RecipeFormatVersion: "2020-01-25"
+ComponentName: com.example.HelloWorld
+ComponentVersion: "1.0.2"
+ComponentDescription: "Publica un mensaje Hello World en IoT Core cada 5 segundos"
+ComponentPublisher: "Keedian"
+ComponentDependencies:
+  aws.greengrass.Nucleus:
+    VersionRequirement: ">=2.0.0"
+ComponentConfiguration:
+  DefaultConfiguration:
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        "com.example.HelloWorld:mqtt:1":
+          policyDescription: "Permite publicar en hello/world via IoT Core"
+          operations:
+            - aws.greengrass.ipc.mqttproxy#PublishToIoTCore
+          resources:
+            - "hello/world"
+Manifests:
+  - Platform:
+      os: linux
+    Lifecycle:
+      Run:
+        Script: python3 {artifacts:path}/hello_world.py
+    Artifacts:
+      - URI: "s3://keedian-greengrass-artifacts-320901122104/artifacts/com.example.HelloWorld/1.0.1/hello_world.py"
+        Unarchive: NONE

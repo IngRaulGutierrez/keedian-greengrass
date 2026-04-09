@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws iot:*)",
+      "Bash(docker compose:*)"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  greengrass:
+    build: ./greengrass-core
+    container_name: greengrass-core
+    init: true
+    volumes:
+      - ./config:/tmp/certs:ro
+      - ./components:/tmp/components:ro
+      - greengrass-root:/greengrass/v2
+    environment:
+      - AWS_REGION=us-east-2
+      - THING_NAME=GreengrassDockerCore
+      - IOT_DATA_ENDPOINT=akycruzqpng03-ats.iot.us-east-2.amazonaws.com
+      - IOT_CRED_ENDPOINT=c1s8i1z1a3vi3r.credentials.iot.us-east-2.amazonaws.com
+    ports:
+      - "8883:8883"
+    restart: unless-stopped
+
+volumes:
+  greengrass-root:
