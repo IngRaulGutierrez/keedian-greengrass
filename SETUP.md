@@ -53,6 +53,23 @@ docker --version
 # Docker version 28.0.4
 ```
 
+> **Si Docker no es reconocido en PowerShell** (`The term 'docker' is not recognized...`):
+>
+> 1. Verificar que el ejecutable existe:
+>    ```powershell
+>    ls "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
+>    ```
+> 2. Agregar al PATH del sistema (**PowerShell como Administrador**):
+>    ```powershell
+>    [System.Environment]::SetEnvironmentVariable(
+>      'Path',
+>      [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';C:\Program Files\Docker\Docker\resources\bin',
+>      'Machine'
+>    )
+>    ```
+> 3. Cerrar y reabrir la terminal.
+> 4. Asegurarse de que Docker Desktop esté abierto y el servicio esté activo (ícono de ballena en la barra de tareas).
+
 ### 1.2 AWS CLI
 
 - Descargar e instalar AWS CLI v2:
@@ -302,16 +319,30 @@ set -e
 
 echo "[Greengrass] Iniciando configuración..."
 
-mkdir -p /greengrass/v2/config
-mkdir -p /greengrass/v2/packages/artifacts-unarchived/com.example.HelloWorld/1.0.0
+VERSION="1.0.2"
+ARTIFACT_PATH="/greengrass/v2/packages/artifacts-unarchived/com.example.HelloWorld/${VERSION}"
 
+# Crear directorios base
+mkdir -p /greengrass/v2/config
+mkdir -p ${ARTIFACT_PATH}
+
+# Copiar certificados
 cp /tmp/certs/device.pem.crt    /greengrass/v2/device.pem.crt
 cp /tmp/certs/private.pem.key   /greengrass/v2/private.pem.key
 cp /tmp/certs/AmazonRootCA1.pem /greengrass/v2/AmazonRootCA1.pem
 
-cp -r /tmp/components/com.example.HelloWorld/artifacts/* \
-      /greengrass/v2/packages/artifacts-unarchived/com.example.HelloWorld/1.0.0/
+echo "[Greengrass] Certificados copiados."
 
+# Copiar artefactos del componente Hello World
+cp -r /tmp/components/com.example.HelloWorld/artifacts/* ${ARTIFACT_PATH}/
+
+echo "[Greengrass] Artefactos copiados."
+
+# Generar config.yaml para el Nucleus
+# IMPORTANTE: La operación correcta para el AuthorizationModule interno de Greengrass
+# es "aws.greengrass#PublishToIoTCore" (nombre Smithy), NO
+# "aws.greengrass.ipc.mqttproxy#PublishToIoTCore" (que es el nombre del recipe para
+# cloud deployments). En config.yaml el AuthorizationHandler hace match exacto.
 cat > /greengrass/v2/config/config.yaml <<EOF
 ---
 system:
@@ -328,8 +359,31 @@ services:
       iotRoleAlias: "GreengrassV2TokenExchangeRoleAlias"
       iotDataEndpoint: "${IOT_DATA_ENDPOINT}"
       iotCredEndpoint: "${IOT_CRED_ENDPOINT}"
+  com.example.HelloWorld:
+    componentType: "GENERIC"
+    version: "${VERSION}"
+    lifecycle:
+      run:
+        script: "python3 -u ${ARTIFACT_PATH}/hello_world.py"
+        requiresPrivilege: false
+    configuration:
+      accessControl:
+        aws.greengrass.ipc.mqttproxy:
+          "com.example.HelloWorld:mqtt:1":
+            policyDescription: "Permite publicar en hello/world via IoT Core"
+            operations:
+              - "aws.greengrass#PublishToIoTCore"
+            resources:
+              - "hello/world"
+  main:
+    dependencies:
+      - com.example.HelloWorld
 EOF
 
+echo "[Greengrass] config.yaml generado."
+echo "[Greengrass] Arrancando Nucleus..."
+
+# Arrancar el Nucleus de Greengrass
 exec java -Droot="/greengrass/v2" \
   -Dlog.store=FILE \
   -jar /tmp/GreengrassInstaller/lib/Greengrass.jar \
@@ -373,12 +427,14 @@ Manifests:
 > **Notas importantes sobre el recipe:**
 > - No incluir el paso `Install` para `pip3 install awsiotsdk` si el SDK ya está
 >   instalado en la imagen Docker — causa error de permisos al correr como `ggc_user`.
-> - El `accessControl` en el recipe necesita `operations: ["*"]` en el deployment
->   (ver Paso 5.3). La operación `aws.greengrass.ipc.mqttproxy#PublishToIoTCore`
->   es válida en el recipe pero debe complementarse con wildcard en el deployment
->   para Greengrass Nucleus 2.16.1.
+> - El `accessControl` en el recipe usa `aws.greengrass.ipc.mqttproxy#PublishToIoTCore`
+>   para cloud deployments. Pero en el **config.yaml local** (sin cloud deployment),
+>   se debe usar `aws.greengrass#PublishToIoTCore` — ver Paso 4.3 y sección de
+>   troubleshooting para más detalles.
 > - Los errores de validación que muestra VS Code en el recipe son falsos positivos
 >   del validador YAML — el formato es correcto para Greengrass.
+> - El recipe en `packages/recipes/` copiado manualmente NO aplica su `accessControl`
+>   ni su `lifecycle` al config tree de Greengrass. Esos solo se aplican via deployment.
 
 ### 4.5 components/com.example.HelloWorld/artifacts/hello_world.py
 
@@ -571,14 +627,42 @@ docker compose up --build -d
 
 | Problema | Causa | Solución |
 |----------|-------|----------|
+| `docker` no reconocido en PowerShell | Docker Desktop no está en el PATH del sistema | Agregar `C:\Program Files\Docker\Docker\resources\bin` al PATH como Administrador (ver Paso 1.1) |
+| Docker Desktop instalado pero sigue sin reconocerse | PATH modificado pero terminal no reiniciada | Cerrar y reabrir completamente PowerShell o VS Code |
+| `exec /entrypoint.sh failed: No such file or directory` | `entrypoint.sh` fue creado/editado en Windows con saltos de línea CRLF | Convertir a LF: `sed -i 's/\r//' greengrass-core/entrypoint.sh` y reconstruir |
+| `dependencies is already a container, cannot become a leaf` | Volumen Docker con estado corrupto de ejecuciones anteriores | Limpiar completamente: `docker compose down -v && docker compose up -d` |
+| `Not Authorized` al publicar en IPC | Nombre de operación incorrecto en `accessControl` del config.yaml | En config.yaml usar `aws.greengrass#PublishToIoTCore` (nombre Smithy interno), NO `aws.greengrass.ipc.mqttproxy#PublishToIoTCore` |
+| `accessControl` en recipe manual no aplica | Greengrass solo aplica `accessControl` de recipes durante un deployment, no al copiarlos manualmente a `packages/recipes/` | Definir el `accessControl` directamente en el `config.yaml` (ver Paso 4.3) |
+| Componente va a FINISHED sin ejecutarse | `lifecycle` no definido en config.yaml; Greengrass no lee el lifecycle de un recipe copiado manualmente | Definir el `lifecycle.run.script` directamente en el `config.yaml` |
+| Log del componente sin output (script corre silencioso) | Python bufferiza stdout cuando corre como subprocess sin TTY | Agregar flag `-u`: `python3 -u hello_world.py` |
 | `curl` conflicts en Dockerfile | `amazoncorretto:11-al2023` ya trae `curl-minimal` | No instalar `curl`, ya está disponible |
 | `groupadd: command not found` | Falta `shadow-utils` en Amazon Linux 2023 | Agregar `shadow-utils` al `dnf install` |
 | `pip3 install` falla como `ggc_user` | Sin permisos en `/home/ggc_user` | No incluir el paso `Install` en el recipe si el SDK está en la imagen |
-| `Operation not registered` en IPC | El nombre de operación específico no está registrado en Nucleus 2.16.1 | Usar `"operations": ["*"]` en el `configurationUpdate` del deployment |
+| `Operation not registered` en IPC (cloud deployment) | El nombre de operación específico no está registrado en Nucleus 2.16.1 | Usar `"operations": ["*"]` en el `configurationUpdate` del deployment |
 | Deployment `FAILED` con rollback | El componente crashea durante el deployment y Greengrass hace rollback | Corregir el error antes de redeployar — crear nueva versión del componente |
 | Rutas Unix en Git Bash | Git Bash convierte `/path` a `C:/Program Files/Git/path` | Usar `MSYS_NO_PATHCONV=1` antes de comandos `docker exec` con rutas absolutas |
-| Log del componente sin output | Python bufferiza stdout cuando corre como subprocess sin TTY | Normal — los logs aparecen en lote. Usar `python3 -u` para unbuffered si es necesario |
 | Región incorrecta | Resources creados en región diferente | Todos los recursos AWS deben estar en la misma región (`us-east-2` en este proyecto) |
+
+---
+
+## Diferencias entre config.yaml local y cloud deployment
+
+Al ejecutar Greengrass en Docker sin cloud deployment activo, la forma de definir
+componentes es diferente a la documentación oficial de AWS (que asume cloud deployment):
+
+| Aspecto | Cloud Deployment | Config.yaml local (este proyecto) |
+|---------|-----------------|-------------------------------------|
+| Lifecycle | Definido en recipe, aplicado por Greengrass durante deployment | Debe definirse en `config.yaml` bajo `services.{component}.lifecycle` |
+| accessControl | Leído del recipe por el AuthorizationModule | Debe definirse en `config.yaml` bajo `services.{component}.configuration.accessControl` |
+| Nombre de operación IPC | `aws.greengrass.ipc.mqttproxy#PublishToIoTCore` | `aws.greengrass#PublishToIoTCore` (nombre Smithy interno) |
+| Recipe en `packages/recipes/` | Greengrass lo coloca ahí después del deployment | Copiar manualmente NO aplica lifecycle ni accessControl |
+
+> **Razón técnica:** El `AuthorizationHandler` de Greengrass usa comparación de string
+> exacta. Cuando el request llega desde el MQTT Proxy, la operación se identifica
+> internamente como `aws.greengrass#PublishToIoTCore` (namespace Smithy). En un recipe
+> para cloud deployment, Greengrass normaliza `aws.greengrass.ipc.mqttproxy#PublishToIoTCore`
+> durante el proceso de deployment. En config.yaml ese proceso de normalización no ocurre,
+> por lo que se debe usar el nombre interno directamente.
 
 ---
 

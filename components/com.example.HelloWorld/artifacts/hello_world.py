@@ -16,7 +16,7 @@ print("[HelloWorld] Conectado. Iniciando publicación de mensajes...")
 count = 1
 while True:
     message = {
-        "message": "Hello World from Greengrass on Docker!",
+        "message": "Hello World from Greengrass on Docker! - Rabdy Test",
         "count": count,
         "timestamp": time.time()
     }

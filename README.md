@@ -37,7 +37,11 @@ Para verificar los mensajes en AWS IoT Console:
 ## Bajar el proyecto
 
 ```bash
+# Solo detener
 docker compose down
+
+# Detener y limpiar volúmenes (necesario si hay errores de estado corrupto)
+docker compose down -v
 ```
 
 ---
@@ -48,6 +52,36 @@ docker compose down
 MSYS_NO_PATHCONV=1 docker exec greengrass-core \
   tail -f /greengrass/v2/logs/com.example.HelloWorld.log
 ```
+
+Resultado esperado:
+```
+[HelloWorld] Conectando al IPC de Greengrass...
+[HelloWorld] Conectado. Iniciando publicación de mensajes...
+[HelloWorld] #1 Publicado en 'hello/world': Hello World from Greengrass on Docker!
+[HelloWorld] #2 Publicado en 'hello/world': Hello World from Greengrass on Docker!
+```
+
+---
+
+## Verificar conectividad con AWS IoT Core
+
+```powershell
+Test-NetConnection -ComputerName "akycruzqpng03-ats.iot.us-east-2.amazonaws.com" -Port 8883
+# TcpTestSucceeded: True
+```
+
+---
+
+## Troubleshooting rápido
+
+| Síntoma | Solución |
+|---------|---------|
+| `docker` no reconocido en PowerShell | Abrir PowerShell **como Administrador** y ejecutar: `[System.Environment]::SetEnvironmentVariable('Path', [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';C:\Program Files\Docker\Docker\resources\bin', 'Machine')` — luego reiniciar la terminal |
+| `exec /entrypoint.sh failed: No such file or directory` | Archivo con saltos de línea Windows (CRLF). Ejecutar: `sed -i 's/\r//' greengrass-core/entrypoint.sh` y reconstruir |
+| `dependencies is already a container` | Volumen con estado corrupto. Ejecutar: `docker compose down -v && docker compose up -d` |
+| `Not Authorized` en IPC | Verificar que `accessControl` en `entrypoint.sh` use `aws.greengrass#PublishToIoTCore` (no `aws.greengrass.ipc.mqttproxy#...`) |
+| Componente va a FINISHED sin ejecutar nada | Falta `lifecycle` en la sección del componente en `config.yaml` dentro del `entrypoint.sh` |
+| Log del componente vacío aunque corre | Python bufferiza stdout. El script debe correr con `python3 -u` |
 
 ---
 
