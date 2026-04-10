@@ -3,9 +3,10 @@ config/private.pem.key
 config/device.pem.crt
 config/public.pem.key
 
-# Credenciales AWS locales
+# Variables de entorno con credenciales
 .env
 *.env
+!.env.example
 
 # Claude Code
 .claude/settings.local.json

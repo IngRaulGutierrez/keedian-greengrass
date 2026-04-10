@@ -11,11 +11,6 @@ services:
       - greengrass-root:/greengrass/v2
     env_file:
       - .env
-    environment:
-      - AWS_REGION=us-east-2
-      - THING_NAME=GreengrassDockerCore
-      - IOT_DATA_ENDPOINT=akycruzqpng03-ats.iot.us-east-2.amazonaws.com
-      - IOT_CRED_ENDPOINT=c1s8i1z1a3vi3r.credentials.iot.us-east-2.amazonaws.com
     ports:
       - "8883:8883"
     restart: unless-stopped
