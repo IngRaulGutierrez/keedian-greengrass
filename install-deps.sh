@@ -210,7 +210,18 @@ install_awscli_linux() {
     esac
     TMP_DIR=$(mktemp -d)
     curl -s "$URL" -o "$TMP_DIR/awscliv2.zip"
-    unzip -q "$TMP_DIR/awscliv2.zip" -d "$TMP_DIR"
+
+    # Extraer: usar unzip si está disponible, si no usar Python (ya instalado)
+    if command -v unzip &>/dev/null; then
+        unzip -q "$TMP_DIR/awscliv2.zip" -d "$TMP_DIR"
+    else
+        warn "unzip no encontrado. Usando Python para extraer..."
+        python3 -c "
+import zipfile, sys
+zipfile.ZipFile('$TMP_DIR/awscliv2.zip').extractall('$TMP_DIR')
+"
+    fi
+
     sudo "$TMP_DIR/aws/install" --update
     rm -rf "$TMP_DIR"
     ok "AWS CLI instalado."
