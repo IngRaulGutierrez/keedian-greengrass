@@ -5,9 +5,14 @@ from awsiot.greengrasscoreipc.model import (
 )
 import time
 import json
+import os
 
 TOPIC = "hello/world"
 TIMEOUT = 10
+
+device_name = os.getenv("DEVICE_NAME")
+base_message = "Hello World from Greengrass on Docker!"
+full_message = f"{base_message} - {device_name}" if device_name else base_message
 
 print("[HelloWorld] Conectando al IPC de Greengrass...")
 ipc_client = awsiot.greengrasscoreipc.connect()
@@ -16,7 +21,7 @@ print("[HelloWorld] Conectado. Iniciando publicación de mensajes...")
 count = 1
 while True:
     message = {
-        "message": "Hello World from Greengrass on Docker! - Rabdy Test",
+        "message": full_message,
         "count": count,
         "timestamp": time.time()
     }

@@ -9,6 +9,8 @@ services:
       - ./config:/tmp/certs:ro
       - ./components:/tmp/components:ro
       - greengrass-root:/greengrass/v2
+    env_file:
+      - .env
     environment:
       - AWS_REGION=us-east-2
       - THING_NAME=GreengrassDockerCore

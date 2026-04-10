@@ -1,0 +1,2 @@
+# Forzar LF en todos los archivos de script para evitar problemas CRLF en Windows
+greengrass-core/entrypoint.sh text eol=lf
