@@ -6,7 +6,20 @@ AWS IoT Greengrass v2 corriendo en Docker Desktop (Windows), publicando mensajes
 
 ## Primera vez (configuración automática)
 
-1. Copia el archivo de ejemplo y completa tus credenciales:
+### Paso 0 — Instalar dependencias (si no están instaladas)
+
+Si aún no tienes AWS CLI, Docker Desktop o Python 3, ejecuta:
+
+```bash
+bash install-deps.sh
+```
+
+Compatible con Windows (Git Bash), macOS y Linux. Instala automáticamente lo que falte.
+Sigue las instrucciones al final del script si indica pasos manuales o reinicio.
+
+### Paso 1 — Configurar credenciales
+
+Copia el archivo de ejemplo y completa tus credenciales:
 
 ```bash
 cp .env.example .env
@@ -24,7 +37,7 @@ Edita `.env` con tus valores:
 | `IOT_DATA_ENDPOINT` | **Se completa automáticamente** |
 | `IOT_CRED_ENDPOINT` | **Se completa automáticamente** |
 
-2. Ejecuta el setup:
+### Paso 2 — Ejecutar el setup
 
 ```bash
 bash setup.sh
