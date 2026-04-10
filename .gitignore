@@ -2,10 +2,10 @@
 config/private.pem.key
 config/device.pem.crt
 config/public.pem.key
- 
+
 # Credenciales AWS locales
 .env
 *.env
- 
+
 # Claude Code
 .claude/settings.local.json
