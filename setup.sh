@@ -43,11 +43,24 @@ done
 [ -z "$PYTHON" ] && fail "Python 3 no encontrado. Instálalo antes de continuar."
 log "Python detectado: $PYTHON ($($PYTHON --version 2>&1))"
 
-# Verificar AWS CLI
-command -v aws &>/dev/null || fail "AWS CLI no encontrado. Instálalo antes de continuar."
+# Verificar dependencias — instalar automáticamente si faltan
+DEPS_MISSING=false
+command -v aws    &>/dev/null || DEPS_MISSING=true
+command -v docker &>/dev/null || DEPS_MISSING=true
 
-# Verificar Docker
-command -v docker &>/dev/null || fail "Docker no encontrado. Instala Docker Desktop antes de continuar."
+if [ "$DEPS_MISSING" = true ]; then
+    warn "Dependencias faltantes. Ejecutando install-deps.sh..."
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    bash "$SCRIPT_DIR/install-deps.sh" || fail "La instalación de dependencias falló."
+
+    # Refrescar PATH para la sesión actual
+    export PATH="$PATH:/usr/local/bin:/usr/bin"
+    hash -r 2>/dev/null || true
+
+    # Re-verificar tras la instalación
+    command -v aws    &>/dev/null || fail "AWS CLI no quedó disponible. Reinicia la terminal y ejecuta setup.sh de nuevo."
+    command -v docker &>/dev/null || fail "Docker no quedó disponible. Reinicia la terminal y ejecuta setup.sh de nuevo."
+fi
 
 # ------------------------------------------------------------
 # Funciones Python para manejo portable del .env
@@ -105,6 +118,25 @@ with open('.env', 'w', encoding='utf-8', newline='\n') as f:
 PYEOF
 }
 
+# Verifica si un directorio existe — maneja rutas Windows (D:/...), WSL2 (/mnt/d/...) y Git Bash (/d/...)
+dir_exists() {
+    "$PYTHON" - "$1" <<'PYEOF'
+import os, sys, re
+path = sys.argv[1]
+if os.path.isdir(path):
+    sys.exit(0)
+# Intentar traducir ruta Windows D:/... a rutas Unix equivalentes
+m = re.match(r'^([A-Za-z]):[/\\](.*)', path)
+if m:
+    drive = m.group(1).lower()
+    rest  = m.group(2).replace('\\', '/')
+    for prefix in (f'/mnt/{drive}/', f'/{drive}/'):   # WSL2 y Git Bash
+        if os.path.isdir(prefix + rest):
+            sys.exit(0)
+sys.exit(1)
+PYEOF
+}
+
 # Convierte CRLF → LF en un archivo (portable, binario)
 fix_crlf() {
     local filepath="$1"
@@ -134,6 +166,7 @@ AWS_SECRET_ACCESS_KEY=$(get_env_var AWS_SECRET_ACCESS_KEY)
 AWS_REGION=$(get_env_var AWS_REGION)
 THING_NAME=$(get_env_var THING_NAME)
 DEVICE_NAME=$(get_env_var DEVICE_NAME)
+KEEDIAN_LINK_COMPONENTS_PATH=$(get_env_var KEEDIAN_LINK_COMPONENTS_PATH)
 
 # Validar variables obligatorias
 [ -z "$AWS_ACCESS_KEY_ID" ]     && fail "AWS_ACCESS_KEY_ID no definido en .env"
@@ -141,7 +174,34 @@ DEVICE_NAME=$(get_env_var DEVICE_NAME)
 [ -z "$AWS_REGION" ]            && fail "AWS_REGION no definido en .env"
 [ -z "$THING_NAME" ]            && fail "THING_NAME no definido en .env"
 
+# Auto-detectar ruta de keedian-link si no está configurada
+if [ -z "$KEEDIAN_LINK_COMPONENTS_PATH" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    AUTO_PATH="$(dirname "$SCRIPT_DIR")/keedian-link/components"
+    if dir_exists "$AUTO_PATH"; then
+        KEEDIAN_LINK_COMPONENTS_PATH="$AUTO_PATH"
+        log "keedian-link detectado automáticamente: $KEEDIAN_LINK_COMPONENTS_PATH"
+        update_env_var "KEEDIAN_LINK_COMPONENTS_PATH" "$KEEDIAN_LINK_COMPONENTS_PATH"
+    else
+        warn "No se detectó keedian-link automáticamente en: $AUTO_PATH"
+        while true; do
+            echo -n "[setup] Ingresa la ruta absoluta a la carpeta components/ de keedian-link: "
+            read -r KEEDIAN_LINK_COMPONENTS_PATH
+            if dir_exists "$KEEDIAN_LINK_COMPONENTS_PATH"; then
+                log "Ruta válida: $KEEDIAN_LINK_COMPONENTS_PATH"
+                update_env_var "KEEDIAN_LINK_COMPONENTS_PATH" "$KEEDIAN_LINK_COMPONENTS_PATH"
+                break
+            else
+                warn "La carpeta no existe: $KEEDIAN_LINK_COMPONENTS_PATH — intenta de nuevo."
+            fi
+        done
+    fi
+fi
+dir_exists "$KEEDIAN_LINK_COMPONENTS_PATH" \
+    || fail "La carpeta keedian-link components no existe: $KEEDIAN_LINK_COMPONENTS_PATH"
+
 log "Usando región: $AWS_REGION | Thing: $THING_NAME"
+log "Componentes keedian-link: $KEEDIAN_LINK_COMPONENTS_PATH"
 
 # ------------------------------------------------------------
 # 2. Configurar AWS CLI con credenciales del .env
@@ -156,7 +216,21 @@ aws sts get-caller-identity --query 'Arn' --output text > /dev/null \
 log "Credenciales AWS verificadas."
 
 # ------------------------------------------------------------
-# 3. Crear directorio de certificados
+# 3. Adjuntar política Greengrass al Token Exchange Role
+# ------------------------------------------------------------
+GG_POLICY_NAME="GreengrassComponentAccess"
+GG_ROLE_NAME="GreengrassV2TokenExchangeRole"
+
+aws iam put-role-policy \
+    --role-name "$GG_ROLE_NAME" \
+    --policy-name "$GG_POLICY_NAME" \
+    --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["greengrass:GetComponentVersionArtifact","greengrass:ResolveComponentCandidates","greengrass:GetDeploymentConfiguration","greengrass:ListThingGroupsForCoreDevice"],"Resource":"*"}]}' \
+    --region "$AWS_REGION" > /dev/null 2>&1 \
+    && log "Política '$GG_POLICY_NAME' adjuntada a '$GG_ROLE_NAME'." \
+    || warn "No se pudo adjuntar política a '$GG_ROLE_NAME' (puede no existir o faltar permisos IAM)."
+
+# ------------------------------------------------------------
+# 4. Crear directorio de certificados
 # ------------------------------------------------------------
 mkdir -p config
 
@@ -274,15 +348,168 @@ fix_crlf "greengrass-core/entrypoint.sh"
 log "Saltos de línea de entrypoint.sh verificados (LF)."
 
 # ------------------------------------------------------------
-# 11. Levantar el contenedor
+# 11. Verificar red keedian-network
+# ------------------------------------------------------------
+if ! docker network inspect keedian-network &>/dev/null; then
+    fail "La red Docker 'keedian-network' no existe. Ejecuta primero el setup.sh del proyecto keedian-link."
+fi
+log "Red keedian-network verificada."
+
+# ------------------------------------------------------------
+# 12. Levantar el contenedor
 # ------------------------------------------------------------
 log "Iniciando contenedor Greengrass..."
+
+# Exportar el path de componentes en el formato que Docker entiende según el contexto:
+#   WSL2 (Linux):   D:/foo  →  /mnt/d/foo
+#   Git Bash (Windows): D:/foo  →  D:/foo  (Docker Desktop lo traduce directamente)
+KEEDIAN_LINK_COMPONENTS_PATH=$(
+    "$PYTHON" - "$KEEDIAN_LINK_COMPONENTS_PATH" "$OS" <<'PYEOF'
+import sys, re, os
+path  = sys.argv[1]
+os_id = sys.argv[2]
+if os_id == 'Linux':
+    m = re.match(r'^([A-Za-z]):[/\\](.*)', path)
+    if m:
+        drive = m.group(1).lower()
+        rest  = m.group(2).replace('\\', '/')
+        print(f'/mnt/{drive}/{rest}')
+        sys.exit(0)
+print(path)
+PYEOF
+)
+export KEEDIAN_LINK_COMPONENTS_PATH
+log "Path Docker para keedian-link: $KEEDIAN_LINK_COMPONENTS_PATH"
+
 docker compose down -v 2>/dev/null || true
 docker compose up --build -d
 
-log "============================================================"
-log "Setup completado exitosamente."
-log "Verifica mensajes en AWS IoT Console:"
-log "  Region: $AWS_REGION"
-log "  Test -> MQTT Test Client -> Suscribirse a: hello/world"
-log "============================================================"
+# ------------------------------------------------------------
+# 13. Esperar que el Nucleus esté listo
+# ------------------------------------------------------------
+wait_nucleus_ready() {
+    local timeout=180
+    local elapsed=0
+    log "Esperando que el Nucleus arranque (máx. ${timeout}s)..."
+    while [ $elapsed -lt $timeout ]; do
+        if docker logs greengrass-core 2>&1 | grep -q "Launched Nucleus successfully"; then
+            log "Nucleus listo."
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+        warn "  Esperando Nucleus... (${elapsed}s / ${timeout}s)"
+    done
+    fail "Timeout esperando el Nucleus. Revisa: docker logs greengrass-core"
+}
+wait_nucleus_ready
+
+# ------------------------------------------------------------
+# 14. Provisionar entorno Python en el contenedor
+# ------------------------------------------------------------
+provision_greengrass_container() {
+    log "Verificando provisioning del contenedor..."
+
+    # Las dependencias Python están instaladas en la imagen (Dockerfile).
+    # Aquí solo verificamos y creamos gateway.yaml si falta.
+
+    echo "[setup]   Instalando dependencias Python..."
+    docker exec greengrass-core python3 -m pip install --quiet \
+        structlog \
+        pydantic \
+        pyyaml \
+        "sqlalchemy[asyncio]" \
+        aiosqlite \
+        aiomysql \
+        pymodbus \
+        tenacity \
+        psutil \
+        python-dateutil \
+        APScheduler \
+        httpx \
+        zstandard \
+        "BAC0>=2024.9.8"
+    echo "[setup]   ✓ Dependencias instaladas."
+
+    # Crear gateway.yaml si no existe (no se genera en entrypoint.sh porque
+    # necesita THING_NAME que viene del .env del host)
+    if docker exec greengrass-core test -f /var/lib/keedian-gw/configs/gateway.yaml 2>/dev/null; then
+        warn "  gateway.yaml ya existe. Omitiendo."
+    else
+        log "  Creando gateway.yaml de desarrollo..."
+        THING_NAME_VAL=$(get_env_var THING_NAME)
+        docker exec greengrass-core bash -c "cat > /var/lib/keedian-gw/configs/gateway.yaml << 'YAMLEOF'
+gateway_id: \"${THING_NAME_VAL}\"
+log_level: \"INFO\"
+
+network:
+  interfaces:
+    - name: \"eth0\"
+      role: \"uplink\"
+      metric: 100
+  fallback_to_dhcp: true
+
+cloud:
+  tuten_mqtt:
+    enabled: true
+    broker: \"tuten-gw-mqtt\"
+    port: 1883
+    client_id: \"${THING_NAME_VAL}\"
+    qos: 1
+    keepalive: 60
+  telemetry:
+    level: \"standard\"
+    interval: 300
+YAMLEOF"
+        log "  ✓ gateway.yaml creado."
+    fi
+
+    log "Provisioning verificado."
+}
+provision_greengrass_container
+
+# ------------------------------------------------------------
+# 15. Esperar inicialización de componentes keedian-link
+# ------------------------------------------------------------
+log "Esperando inicialización de componentes (30s)..."
+sleep 30
+
+# ------------------------------------------------------------
+# 16. Verificar estado de los componentes por sus logs
+# ------------------------------------------------------------
+COMPONENTS=(
+    "com.keedian.config-manager"
+    "com.keedian.db-layer"
+    "com.keedian.task-manager"
+    "com.keedian.modbus-adapter"
+    "com.keedian.bacnet-adapter"
+    "com.keedian.data-uploader"
+)
+
+log "Verificando estado de los componentes..."
+ALL_OK=true
+for comp in "${COMPONENTS[@]}"; do
+    log_file="/greengrass/v2/logs/${comp}.log"
+    if docker exec greengrass-core sh -c "test -f $log_file" 2>/dev/null; then
+        if docker exec greengrass-core sh -c "grep -q FATAL $log_file" 2>/dev/null; then
+            warn "  ✗ $comp → tiene errores FATAL en log"
+            ALL_OK=false
+        else
+            log "  ✓ $comp → activo (sin errores FATAL)"
+        fi
+    else
+        warn "  ? $comp → log no disponible aún (puede estar iniciando)"
+    fi
+done
+
+if [ "$ALL_OK" = true ]; then
+    log "============================================================"
+    log "Setup completado. Componentes keedian-link iniciados."
+    log "Para ver logs: docker exec greengrass-core tail -f /greengrass/v2/logs/<nombre>.log"
+    log "============================================================"
+else
+    warn "============================================================"
+    warn "Algunos componentes tienen errores. Revisa sus logs:"
+    warn "  docker exec greengrass-core tail -100 /greengrass/v2/logs/<nombre>.log"
+    warn "============================================================"
+fi

@@ -217,9 +217,11 @@ install_awscli_linux() {
     else
         warn "unzip no encontrado. Usando Python para extraer..."
         python3 -c "
-import zipfile, sys
+import zipfile
 zipfile.ZipFile('$TMP_DIR/awscliv2.zip').extractall('$TMP_DIR')
 "
+        # Python no preserva permisos de ejecución del ZIP — restaurarlos
+        chmod -R +x "$TMP_DIR/aws/"
     fi
 
     sudo "$TMP_DIR/aws/install" --update

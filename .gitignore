@@ -8,5 +8,8 @@ config/public.pem.key
 *.env
 !.env.example
 
+# Directorio de respaldo para keedian-link (creado automáticamente si KEEDIAN_LINK_COMPONENTS_PATH no está configurado)
+keedian-link-components/
+
 # Claude Code
 .claude/settings.local.json

@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   greengrass:
     build: ./greengrass-core
@@ -9,11 +7,20 @@ services:
       - ./config:/tmp/certs:ro
       - ./components:/tmp/components:ro
       - greengrass-root:/greengrass/v2
+      - ${KEEDIAN_LINK_COMPONENTS_PATH:-./keedian-link-components}:/keedian-components:ro
+      - ./data:/var/lib/keedian-gw/data
     env_file:
       - .env
     ports:
       - "8883:8883"
     restart: unless-stopped
+    networks:
+      - default
+      - keedian-network
 
 volumes:
   greengrass-root:
+
+networks:
+  keedian-network:
+    external: true
