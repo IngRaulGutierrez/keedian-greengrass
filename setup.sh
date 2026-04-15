@@ -167,6 +167,7 @@ AWS_REGION=$(get_env_var AWS_REGION)
 THING_NAME=$(get_env_var THING_NAME)
 DEVICE_NAME=$(get_env_var DEVICE_NAME)
 KEEDIAN_LINK_COMPONENTS_PATH=$(get_env_var KEEDIAN_LINK_COMPONENTS_PATH)
+SIMULATE_MODBUS=$(get_env_var SIMULATE_MODBUS)
 
 # Validar variables obligatorias
 [ -z "$AWS_ACCESS_KEY_ID" ]     && fail "AWS_ACCESS_KEY_ID no definido en .env"
@@ -511,4 +512,15 @@ else
     warn "Algunos componentes tienen errores. Revisa sus logs:"
     warn "  docker exec greengrass-core tail -100 /greengrass/v2/logs/<nombre>.log"
     warn "============================================================"
+fi
+
+# ------------------------------------------------------------
+# 17. Simulación Modbus (opcional)
+# ------------------------------------------------------------
+if [ "$SIMULATE_MODBUS" = "true" ] || [ "$SIMULATE_MODBUS" = "TRUE" ]; then
+    log "SIMULATE_MODBUS=true — ejecutando simulación de modbus-adapter..."
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    bash "$SCRIPT_DIR/scripts/simulate-modbus.sh"
+else
+    log "SIMULATE_MODBUS=false — simulación omitida."
 fi

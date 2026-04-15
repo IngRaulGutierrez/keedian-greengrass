@@ -20,6 +20,7 @@ RUN python3 -m pip install --upgrade pip --quiet \
     pyyaml \
     "sqlalchemy[asyncio]" \
     asyncpg \
+    aiomqtt \
     pymodbus \
     tenacity \
     psutil \

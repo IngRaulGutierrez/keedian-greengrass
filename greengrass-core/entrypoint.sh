@@ -94,7 +94,7 @@ COMPONENTS = [
     ('com.keedian.task-manager',    '1.1.8',  'task-manager'),
     ('com.keedian.modbus-adapter',  '1.3.2',  'modbus-adapter'),
     ('com.keedian.bacnet-adapter',  '1.1.6',  'bacnet-adapter'),
-    ('com.keedian.data-uploader',   '1.2.4',  'data-uploader'),
+    ('com.keedian.data-uploader',   '1.2.5',  'data-uploader'),
 ]
 
 def build_access_control_yaml(access_control):
@@ -220,13 +220,13 @@ echo "[Greengrass] Directorios /var/lib/keedian-gw/ listos."
 
 # Crear venv compartido si no existe e instalar dependencias Python
 VENV_PATH="/opt/keedian-gw/venv"
-VENV_STAMP="${VENV_PATH}/.installed_asyncpg"
+VENV_STAMP="${VENV_PATH}/.installed_v2"
 if [ ! -f "$VENV_STAMP" ]; then
     echo "[Greengrass] Creando venv en ${VENV_PATH}..."
     python3 -m venv "${VENV_PATH}"
     "${VENV_PATH}/bin/pip" install --quiet --no-cache-dir \
         structlog tenacity httpx \
-        "sqlalchemy[asyncio]" asyncpg \
+        "sqlalchemy[asyncio]" asyncpg aiomqtt \
         pydantic pyyaml awsiotsdk
     touch "${VENV_STAMP}"
     echo "[Greengrass] Venv listo con dependencias instaladas."
