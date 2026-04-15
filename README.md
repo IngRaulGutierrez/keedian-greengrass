@@ -10,7 +10,7 @@ AWS IoT Greengrass v2 corriendo en Docker, integrado con **keedian-link** para d
 keedian-link/                        keedian-greengrass/
 ├── setup.sh  ──────────────────►  ├── setup.sh
 │   └── crea keedian-network         │   └── conecta a keedian-network
-├── tuten-gw-mariadb (3306)  ◄─────  ├── greengrass-core
+├── keedian-gw-postgres (5432) ─────  ├── greengrass-core
 └── tuten-gw-mqtt    (1883)  ◄─────  │   ├── com.keedian.config-manager
                                      │   ├── com.keedian.db-layer
                                      │   ├── com.keedian.task-manager
@@ -30,7 +30,8 @@ para que el Nucleus los inicie automáticamente — sin necesidad de `greengrass
 ## Requisitos previos
 
 - **[keedian-link](../keedian-link) debe ejecutarse primero** — su `setup.sh` crea la red Docker
-  `keedian-network`, MariaDB (`tuten-gw-mariadb:3306`) y Mosquitto (`tuten-gw-mqtt:1883`)
+  `keedian-network` y Mosquitto (`tuten-gw-mqtt:1883`)
+- PostgreSQL (`keedian-gw-postgres:5432`) se levanta automáticamente dentro de este proyecto
 - Docker Desktop con Linux containers activo
 - AWS CLI, Python 3 (se instalan automáticamente con `install-deps.sh` si faltan)
 
@@ -98,11 +99,11 @@ El script ejecuta automáticamente:
 | Componente | Versión | Descripción |
 |------------|---------|-------------|
 | `com.keedian.config-manager` | 1.1.9 | Gestión de configuración del gateway |
-| `com.keedian.db-layer` | 1.2.2 | Capa de acceso a MariaDB |
+| `com.keedian.db-layer` | 1.2.4 | Capa de acceso a PostgreSQL |
 | `com.keedian.task-manager` | 1.1.8 | Orquestación de tareas |
 | `com.keedian.modbus-adapter` | 1.3.2 | Lectura de dispositivos Modbus |
 | `com.keedian.bacnet-adapter` | 1.1.6 | Lectura de dispositivos BACnet |
-| `com.keedian.data-uploader` | 1.2.2 | Publicación de datos a AWS IoT Core |
+| `com.keedian.data-uploader` | 1.2.4 | Publicación de datos a AWS IoT Core |
 
 Los componentes se registran en `config.yaml` al arrancar el contenedor mediante la lectura
 de sus recetas JSON en `/keedian-components/<nombre>/recipes/<nombre>-<versión>.json`.

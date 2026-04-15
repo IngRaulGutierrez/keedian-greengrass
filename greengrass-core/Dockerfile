@@ -19,8 +19,7 @@ RUN python3 -m pip install --upgrade pip --quiet \
     pydantic \
     pyyaml \
     "sqlalchemy[asyncio]" \
-    aiosqlite \
-    aiomysql \
+    asyncpg \
     pymodbus \
     tenacity \
     psutil \

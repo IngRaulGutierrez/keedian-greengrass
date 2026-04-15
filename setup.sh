@@ -419,8 +419,7 @@ provision_greengrass_container() {
         pydantic \
         pyyaml \
         "sqlalchemy[asyncio]" \
-        aiosqlite \
-        aiomysql \
+        asyncpg \
         pymodbus \
         tenacity \
         psutil \

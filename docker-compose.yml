@@ -1,8 +1,31 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: keedian-gw-postgres
+    environment:
+      POSTGRES_DB: keedian_gw
+      POSTGRES_USER: keedian_gw
+      POSTGRES_PASSWORD: keedian_dev_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - keedian_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keedian_gw -d keedian_gw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+    restart: unless-stopped
+
   greengrass:
     build: ./greengrass-core
     container_name: greengrass-core
     init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./config:/tmp/certs:ro
       - ./components:/tmp/components:ro
@@ -20,6 +43,7 @@ services:
 
 volumes:
   greengrass-root:
+  keedian_postgres_data:
 
 networks:
   keedian-network:

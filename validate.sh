@@ -25,7 +25,7 @@ export MSYS_NO_PATHCONV=1
 # ------------------------------------------------------------
 section "1. Contenedores"
 
-for name in greengrass-core tuten-gw-mariadb tuten-gw-mqtt; do
+for name in greengrass-core keedian-gw-postgres tuten-gw-mqtt; do
     status=$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null)
     if [ "$status" = "running" ]; then
         ok "$name → running"
@@ -74,8 +74,8 @@ except Exception as e:
     fi
 }
 
-check_tcp "tuten-gw-mariadb" 3306 "MariaDB"
-check_tcp "tuten-gw-mqtt"    1883 "Mosquitto MQTT"
+check_tcp "keedian-gw-postgres" 5432 "PostgreSQL"
+check_tcp "tuten-gw-mqtt"       1883 "Mosquitto MQTT"
 
 # ------------------------------------------------------------
 # 4. Estado de los componentes keedian-link
