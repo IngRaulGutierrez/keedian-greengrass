@@ -1,15 +1,13 @@
-# Certificados y claves privadas del dispositivo IoT
+# Certificados y claves del dispositivo IoT (generados automáticamente)
 config/private.pem.key
 config/device.pem.crt
 config/public.pem.key
+config/AmazonRootCA1.pem
 
 # Variables de entorno con credenciales
 .env
 *.env
 !.env.example
-
-# Directorio de respaldo para keedian-link (creado automáticamente si KEEDIAN_LINK_COMPONENTS_PATH no está configurado)
-keedian-link-components/
 
 # Claude Code
 .claude/settings.local.json

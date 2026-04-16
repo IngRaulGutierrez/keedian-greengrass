@@ -3,32 +3,126 @@ set -e
 
 echo "[Greengrass] Iniciando configuración..."
 
-VERSION="1.0.2"
-ARTIFACT_PATH="/greengrass/v2/packages/artifacts-unarchived/com.example.HelloWorld/${VERSION}"
-HW_ENABLED="${ENABLE_HELLO_WORLD:-false}"
-
 # Crear directorios base
-mkdir -p /greengrass/v2/config
+mkdir -p /greengrass/v2/config /certs
 
-# Copiar certificados
-cp /tmp/certs/device.pem.crt    /greengrass/v2/device.pem.crt
-cp /tmp/certs/private.pem.key   /greengrass/v2/private.pem.key
-cp /tmp/certs/AmazonRootCA1.pem /greengrass/v2/AmazonRootCA1.pem
+# ============================================================
+# Auto-provisionamiento desde AWS
+# Obtiene endpoints, crea certificados si no existen y
+# descarga la CA raíz. Usa AWS_ACCESS_KEY_ID y
+# AWS_SECRET_ACCESS_KEY del entorno.
+# Los certificados se persisten en ./config (bind mount /certs)
+# para ser reutilizados en reinicios posteriores.
+# ============================================================
+python3 - << 'PYEOF'
+import boto3, json, os, sys, urllib.request
 
-echo "[Greengrass] Certificados copiados."
+THING_NAME  = os.environ['THING_NAME']
+AWS_REGION  = os.environ['AWS_REGION']
+CERT_DIR    = '/certs'
+POLICY_NAME = 'GreengrassIoTPolicy'
 
-# Copiar artefactos HelloWorld solo si está habilitado
-if [ "$HW_ENABLED" = "true" ] || [ "$HW_ENABLED" = "TRUE" ]; then
-    mkdir -p "${ARTIFACT_PATH}"
-    cp -r /tmp/components/com.example.HelloWorld/artifacts/* "${ARTIFACT_PATH}/"
-    echo "[Greengrass] Artefactos HelloWorld copiados."
-else
-    echo "[Greengrass] HelloWorld deshabilitado (ENABLE_HELLO_WORLD=${HW_ENABLED})."
-fi
+iot = boto3.client(
+    'iot',
+    region_name=AWS_REGION,
+    aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+    aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+)
 
-# Generar config.yaml — sección base (sistema + Nucleus)
-# Nota: La operacion correcta para el AuthorizationModule es aws.greengrass#PublishToIoTCore
-# (nombre Smithy interno), no aws.greengrass.ipc.mqttproxy#PublishToIoTCore
+cert_file = f'{CERT_DIR}/device.pem.crt'
+key_file  = f'{CERT_DIR}/private.pem.key'
+ca_file   = f'{CERT_DIR}/AmazonRootCA1.pem'
+
+# --- CA raíz ------------------------------------------------
+if not os.path.exists(ca_file):
+    print('[provision] Descargando AmazonRootCA1.pem...')
+    urllib.request.urlretrieve(
+        'https://www.amazontrust.com/repository/AmazonRootCA1.pem',
+        ca_file
+    )
+    print('[provision] CA raíz descargada.')
+else:
+    print('[provision] AmazonRootCA1.pem ya existe.')
+
+# --- Certificado del dispositivo ----------------------------
+if not os.path.exists(cert_file) or not os.path.exists(key_file):
+    print(f'[provision] Provisionando certificado para Thing: {THING_NAME}')
+
+    # Crear Thing si no existe
+    try:
+        iot.describe_thing(thingName=THING_NAME)
+        print(f'[provision] Thing "{THING_NAME}" ya existe.')
+    except iot.exceptions.ResourceNotFoundException:
+        iot.create_thing(thingName=THING_NAME)
+        print(f'[provision] Thing "{THING_NAME}" creado.')
+
+    # Crear política IoT si no existe
+    policy_doc = json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Action": [
+                "iot:Connect",
+                "iot:Publish",
+                "iot:Subscribe",
+                "iot:Receive",
+                "greengrass:*"
+            ],
+            "Resource": "*"
+        }]
+    })
+    try:
+        iot.get_policy(policyName=POLICY_NAME)
+        print(f'[provision] Política "{POLICY_NAME}" ya existe.')
+    except iot.exceptions.ResourceNotFoundException:
+        iot.create_policy(policyName=POLICY_NAME, policyDocument=policy_doc)
+        print(f'[provision] Política "{POLICY_NAME}" creada.')
+
+    # Crear certificado activo
+    resp    = iot.create_keys_and_certificate(setAsActive=True)
+    cert_id  = resp['certificateId']
+    cert_arn = resp['certificateArn']
+
+    with open(cert_file, 'w') as f:
+        f.write(resp['certificatePem'])
+    with open(key_file, 'w') as f:
+        f.write(resp['keyPair']['PrivateKey'])
+    os.chmod(key_file, 0o600)
+
+    # Adjuntar política y Thing al certificado
+    iot.attach_policy(policyName=POLICY_NAME, target=cert_arn)
+    iot.attach_thing_principal(thingName=THING_NAME, principal=cert_arn)
+
+    print(f'[provision] Certificado creado y adjuntado (id: {cert_id})')
+else:
+    print('[provision] Certificados existentes encontrados, reutilizando.')
+
+# --- Endpoints dinámicos ------------------------------------
+data_ep = iot.describe_endpoint(endpointType='iot:Data-ATS')['endpointAddress']
+cred_ep = iot.describe_endpoint(endpointType='iot:CredentialProvider')['endpointAddress']
+
+with open('/tmp/gg_endpoints.env', 'w') as f:
+    f.write(f'IOT_DATA_ENDPOINT={data_ep}\n')
+    f.write(f'IOT_CRED_ENDPOINT={cred_ep}\n')
+
+print(f'[provision] Data endpoint:  {data_ep}')
+print(f'[provision] Cred endpoint:  {cred_ep}')
+print('[provision] Provisionamiento completado.')
+PYEOF
+
+# Cargar endpoints obtenidos
+# shellcheck source=/dev/null
+source /tmp/gg_endpoints.env
+
+# Copiar certificados al directorio de Greengrass
+cp /certs/device.pem.crt    /greengrass/v2/device.pem.crt
+cp /certs/private.pem.key   /greengrass/v2/private.pem.key
+cp /certs/AmazonRootCA1.pem /greengrass/v2/AmazonRootCA1.pem
+
+echo "[Greengrass] Certificados listos."
+
+# Generar config.yaml — solo Nucleus
+# Los componentes keedian-link llegan vía cloud deployment desde AWS IoT Greengrass
 cat > /greengrass/v2/config/config.yaml <<EOF
 ---
 system:
@@ -47,172 +141,7 @@ services:
       iotCredEndpoint: "${IOT_CRED_ENDPOINT}"
 EOF
 
-# Agregar servicio HelloWorld condicionalmente
-if [ "$HW_ENABLED" = "true" ] || [ "$HW_ENABLED" = "TRUE" ]; then
-    cat >> /greengrass/v2/config/config.yaml <<EOF
-  com.example.HelloWorld:
-    componentType: "GENERIC"
-    version: "${VERSION}"
-    lifecycle:
-      run:
-        script: "python3 -u ${ARTIFACT_PATH}/hello_world.py"
-        requiresPrivilege: false
-    configuration:
-      accessControl:
-        aws.greengrass.ipc.mqttproxy:
-          "com.example.HelloWorld:mqtt:1":
-            policyDescription: "Permite publicar en hello/world via IoT Core"
-            operations:
-              - "aws.greengrass#PublishToIoTCore"
-            resources:
-              - "hello/world"
-  main:
-    dependencies:
-      - com.example.HelloWorld
-EOF
-else
-    cat >> /greengrass/v2/config/config.yaml <<EOF
-  main:
-    dependencies: []
-EOF
-fi
-
-echo "[Greengrass] config.yaml base generado."
-
-# Agregar componentes keedian-link leyendo sus recetas
-echo "[Greengrass] Configurando componentes keedian-link desde recetas..."
-python3 - << 'PYEOF'
-import sys, json, os, re
-
-COMP_DIR   = '/keedian-components'
-CFG        = '/greengrass/v2/config/config.yaml'
-THING_NAME = os.environ.get('THING_NAME', '')
-
-COMPONENTS = [
-    ('com.keedian.config-manager',  '1.1.9',  'config-manager'),
-    ('com.keedian.db-layer',        '1.2.4',  'db-layer'),
-    ('com.keedian.task-manager',    '1.1.8',  'task-manager'),
-    ('com.keedian.modbus-adapter',  '1.3.2',  'modbus-adapter'),
-    ('com.keedian.bacnet-adapter',  '1.1.6',  'bacnet-adapter'),
-    ('com.keedian.data-uploader',   '1.2.5',  'data-uploader'),
-]
-
-def build_access_control_yaml(access_control):
-    """Render accessControl dict as YAML block (indented 4 spaces from component name)."""
-    if not access_control:
-        return ''
-    lines = ['    configuration:', '      accessControl:']
-    for namespace, policies in access_control.items():
-        lines.append(f'        {namespace}:')
-        for policy_id, policy in policies.items():
-            lines.append(f'          "{policy_id}":')
-            desc = policy.get('policyDescription', '').replace('"', '\\"')
-            lines.append(f'            policyDescription: "{desc}"')
-            lines.append(f'            operations:')
-            for op in policy.get('operations', []):
-                lines.append(f'              - "{op}"')
-            lines.append(f'            resources:')
-            for res in policy.get('resources', []):
-                lines.append(f'              - "{res}"')
-    return '\n'.join(lines) + '\n'
-
-with open(CFG) as f:
-    config = f.read()
-
-added = []
-for name, ver, dirname in COMPONENTS:
-    artifacts    = f'{COMP_DIR}/{dirname}/artifacts'
-    recipe_file  = f'{COMP_DIR}/{dirname}/recipes/{name}-{ver}.json'
-
-    if not os.path.exists(recipe_file):
-        print(f'[entrypoint] WARN: receta no encontrada: {recipe_file}', file=sys.stderr)
-        continue
-
-    try:
-        with open(recipe_file) as f:
-            recipe = json.load(f)
-    except Exception as e:
-        print(f'[entrypoint] WARN: error leyendo {recipe_file}: {e}', file=sys.stderr)
-        continue
-
-    # Extraer el script del lifecycle (Manifests[*].Lifecycle.Run)
-    script = None
-    for manifest in recipe.get('Manifests', []):
-        lifecycle = manifest.get('Lifecycle', {})
-        run = lifecycle.get('Run', lifecycle.get('run'))
-        if isinstance(run, dict):
-            script = run.get('Script') or run.get('script')
-        elif isinstance(run, str):
-            script = run
-        if script:
-            break
-
-    if not script:
-        print(f'[entrypoint] WARN: lifecycle script no encontrado en {recipe_file}', file=sys.stderr)
-        continue
-
-    script = script.replace('{artifacts:path}', artifacts)
-    script = script.replace('{artifacts:decompressedPath}', artifacts)
-
-    # Sustituir {iot:thingName} con el valor real del Thing
-    script = script.replace('{iot:thingName}', THING_NAME)
-
-    # Sustituir {configuration:/KEY} con los valores de DefaultConfiguration del recipe.
-    # En init-config Greengrass no hace esta sustitución automáticamente.
-    default_cfg = recipe.get('ComponentConfiguration', {}).get('DefaultConfiguration', {})
-    def replace_cfg_var(match):
-        key = match.group(1)
-        val = default_cfg.get(key)
-        if val is None:
-            # Fallback: INFO para claves de log level, vacío para el resto
-            val = 'INFO' if 'level' in key.lower() else ''
-        return str(val)
-    script = re.sub(r'\{configuration:/(\w+)\}', replace_cfg_var, script)
-
-    # Escapar para YAML double-quoted string:
-    #   \  → \\  (barra literal)
-    #   "  → \"  (comilla literal)
-    #   \n → \n  (newline como escape YAML, no plegado a espacio por SnakeYAML)
-    script_esc = script.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-
-    # Extraer accessControl de DefaultConfiguration del recipe
-    access_control = default_cfg.get('accessControl', {})
-    ac_yaml = build_access_control_yaml(access_control)
-
-    config += (
-        f'  {name}:\n'
-        f'    componentType: "GENERIC"\n'
-        f'    version: "{ver}"\n'
-        f'    lifecycle:\n'
-        f'      run:\n'
-        f'        script: "{script_esc}"\n'
-        f'        requiresPrivilege: false\n'
-    )
-    if ac_yaml:
-        config += ac_yaml
-    added.append(name)
-    print(f'[entrypoint] Configurado: {name}={ver}')
-
-if added:
-    extra = '\n      - '.join(added)
-    if '      - com.example.HelloWorld' in config:
-        # HelloWorld habilitado: agregar keedian después de él
-        config = config.replace(
-            '      - com.example.HelloWorld',
-            f'      - com.example.HelloWorld\n      - {extra}'
-        )
-    else:
-        # HelloWorld deshabilitado: reemplazar dependencies: [] con lista keedian
-        config = config.replace(
-            '    dependencies: []\n',
-            f'    dependencies:\n      - {extra}\n'
-        )
-
-with open(CFG, 'w') as f:
-    f.write(config)
-
-print(f'[entrypoint] config.yaml listo — {len(added)} componentes keedian-link configurados.')
-PYEOF
+echo "[Greengrass] config.yaml generado."
 
 # Crear directorios requeridos por los componentes
 mkdir -p /var/lib/keedian-gw/configs /var/lib/keedian-gw/profiles /var/lib/keedian-gw/data
@@ -234,7 +163,7 @@ else
     echo "[Greengrass] Venv ya existe (${VENV_PATH})."
 fi
 
-# Crear gateway.yaml si no existe (el config-manager lo necesita al arrancar)
+# Crear gateway.yaml si no existe
 GW_CONFIG="/var/lib/keedian-gw/configs/gateway.yaml"
 if [ ! -f "$GW_CONFIG" ]; then
     GW_ID="${THING_NAME:-GreengrassDockerCore}"
@@ -253,13 +182,6 @@ database:
   connection_string: "postgresql+asyncpg://keedian_gw:keedian_dev_pass@keedian-gw-postgres:5432/keedian_gw"
 
 cloud:
-  tuten_mqtt:
-    enabled: true
-    broker: "tuten-gw-mqtt"
-    port: 1883
-    client_id: "${GW_ID}"
-    qos: 1
-    keepalive: 60
   telemetry:
     level: "standard"
     interval: 300

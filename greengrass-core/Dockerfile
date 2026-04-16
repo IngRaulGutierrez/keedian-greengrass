@@ -14,6 +14,7 @@ RUN dnf install -y \
 # Instalar SDK de Greengrass IPC y dependencias de los componentes keedian-link
 RUN python3 -m pip install --upgrade pip --quiet \
     && python3 -m pip install --quiet \
+    boto3 \
     awsiotsdk \
     structlog \
     pydantic \
